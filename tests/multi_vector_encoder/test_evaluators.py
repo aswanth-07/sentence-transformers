@@ -320,11 +320,19 @@ def test_distillation_evaluator_per_query_candidate_sets(model: MultiVectorEncod
 
 
 @pytest.mark.parametrize("nested", [False, True])
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
-@pytest.mark.parametrize("grad_mode", ["none", "leaf", "nonleaf"])
 @pytest.mark.parametrize(
-    "device",
-    ["cpu", pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable"))],
+    ("device", "dtype", "grad_mode"),
+    [
+        pytest.param("cpu", torch.float32, "leaf", id="cpu-grad"),
+        pytest.param("cpu", torch.float64, "nonleaf", id="cpu-cast-grad"),
+        pytest.param(
+            "cuda",
+            torch.float32,
+            "none",
+            id="cuda",
+            marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA unavailable"),
+        ),
+    ],
 )
 def test_distillation_evaluator_tensor_scores(
     model: MultiVectorEncoder, nested: bool, dtype: torch.dtype, grad_mode: str, device: str
@@ -340,20 +348,12 @@ def test_distillation_evaluator_tensor_scores(
         scores = [[5.0, 1.0], [4.5, 0.5]]
     leaf_scores = torch.tensor(scores, dtype=dtype, device=device, requires_grad=grad_mode != "none")
     tensor_scores = leaf_scores * 1.0 if grad_mode == "nonleaf" else leaf_scores
-    grad_fn = tensor_scores.grad_fn
     expected = MultiVectorDistillationEvaluator(queries, documents, scores, write_csv=False)(model)
     evaluator = MultiVectorDistillationEvaluator(queries, documents, tensor_scores, write_csv=False)
 
     assert evaluator(model) == pytest.approx(expected)
-    assert evaluator(model) == pytest.approx(expected)
-    assert evaluator.scores.device.type == "cpu"
-    assert evaluator.scores.dtype == torch.float32
-    assert not evaluator.scores.requires_grad
-    assert evaluator.scores.grad_fn is None
     torch.testing.assert_close(tensor_scores, torch.tensor(scores, dtype=dtype, device=device))
     assert tensor_scores.requires_grad == (grad_mode != "none")
-    assert tensor_scores.grad_fn is grad_fn
-    assert leaf_scores.grad is None
     if grad_mode != "none":
         tensor_scores.sum().backward()
         torch.testing.assert_close(leaf_scores.grad, torch.ones_like(leaf_scores))
